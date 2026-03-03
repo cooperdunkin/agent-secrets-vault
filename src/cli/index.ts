@@ -372,7 +372,8 @@ function cmdMcp(): void {
   } catch (err) {
     // execFileSync throws on non-zero exit; that's fine for MCP shutdown
     const code = (err as NodeJS.ErrnoException & { status?: number }).status ?? 1;
-    process.exit(code);
+    // Exit code 130 = SIGINT (Ctrl-C) — not a real error, suppress exit
+    if (code !== 130) process.exit(code);
   }
 }
 

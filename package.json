@@ -10,7 +10,7 @@
     "build": "tsc",
     "build:watch": "tsc --watch",
     "start:mcp": "ASV_IDENTITY=local-dev node dist/mcp/server.js",
-    "test": "node --import tsx/esm src/tests/index.ts",
+    "test": "npx tsx src/tests/index.ts",
     "test:built": "node dist/tests/index.js",
     "lint": "tsc --noEmit"
   },
