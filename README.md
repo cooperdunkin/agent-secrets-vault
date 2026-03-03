@@ -103,12 +103,49 @@ Add to your Claude Code MCP config (`~/.claude/claude_code_config.json` or proje
 }
 ```
 
-> **Security warning:** `ASV_MASTER_PASSWORD` in the MCP config file is stored in **plaintext on disk**. Use a strong, unique value. Restrict file permissions: `chmod 600 ~/.cursor/mcp.json`. This is the primary residual risk of the current architecture — see [Threat Model](#threat-model-notes) for details.
+> **Security note:** `ASV_MASTER_PASSWORD` in the MCP config file is stored in **plaintext on disk**. Use `asv keychain set` to store it in your OS keychain instead — see [Keychain Setup](#keychain-setup-recommended) below.
 
 ### 5. Verify everything works
 
 ```bash
 asv doctor
+```
+
+---
+
+## Keychain Setup (Recommended)
+
+By default, `ASV_MASTER_PASSWORD` must be set in your MCP config file — stored in plaintext on disk. To eliminate this risk, store the master password in your OS keychain instead:
+
+```bash
+asv keychain set
+```
+
+Then update your MCP config to remove `ASV_MASTER_PASSWORD`:
+
+```json
+{
+  "mcpServers": {
+    "agent-secrets-vault": {
+      "command": "node",
+      "args": ["/absolute/path/to/agent-secrets-vault/dist/mcp/server.js"],
+      "env": {
+        "ASV_IDENTITY": "local-dev"
+      }
+    }
+  }
+}
+```
+
+ASV will retrieve the master password from your OS keychain automatically on startup.
+
+**Linux users:** Install libsecret before running keychain commands:
+
+```bash
+# Ubuntu/Debian
+sudo apt install libsecret-1-dev
+# Fedora
+sudo dnf install libsecret-devel
 ```
 
 ---
@@ -121,7 +158,12 @@ asv add <service>         Store an encrypted secret (e.g. asv add openai)
 asv list                  List stored services (names/metadata only, no secrets)
 asv revoke <service>      Delete the stored secret for a service
 asv doctor                Health-check: config, policy, crypto, keystore
-asv mcp                   Start the MCP server (requires ASV_MASTER_PASSWORD)
+asv mcp                   Start the MCP server (env var or keychain for password)
+asv logs                  Show audit log entries (--tail to watch, --last N)
+asv rotate <service>      Re-encrypt a service secret under a new master password
+asv keychain set          Store master password in OS keychain
+asv keychain delete       Remove master password from OS keychain
+asv keychain status       Check whether master password is in keychain
 asv help                  Show help
 ```
 
@@ -247,7 +289,7 @@ All requests are logged to `~/.asv/audit.jsonl`. Each line is a JSON object:
 
 | Variable | Context | Description |
 |---|---|---|
-| `ASV_MASTER_PASSWORD` | MCP server, `asv mcp` | Master password to unlock keystore (required) |
+| `ASV_MASTER_PASSWORD` | MCP server, `asv mcp` | Master password to unlock keystore. Optional if stored in OS keychain via `asv keychain set`; env var takes priority when set. |
 | `ASV_IDENTITY` | MCP server | Identity for policy checks (default: `"unknown"`) |
 | `ASV_POLICY_PATH` | MCP server | Override path to policy.yaml |
 
@@ -292,7 +334,7 @@ npm run lint           # type-check without emitting
 |---|---|
 | **Compromised local machine** | An attacker with OS-level access can read `~/.asv/keystore.json` and, if they have the master password, decrypt all secrets. Full disk encryption (FileVault, LUKS) is the appropriate defence. |
 | **Malicious MCP host process** | The MCP host (Cursor, Claude Code) receives the full API response from ASV. A malicious or compromised host process could intercept this. ASV assumes the MCP host is trusted. |
-| **`ASV_MASTER_PASSWORD` in MCP config** | The master password in `mcp.json` / `claude_code_config.json` is plaintext on disk. Restrict file permissions and consider using OS keychain integration (future work). |
+| **`ASV_MASTER_PASSWORD` in MCP config** | Mitigated by `asv keychain set`, which stores the master password in your OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager) so it never appears in config files. See [Keychain Setup](#keychain-setup-recommended). If you use the env var approach instead, restrict config file permissions with `chmod 600`. |
 | **Memory scraping** | Decrypted secrets pass through process memory. An attacker with memory-read access (e.g. via ptrace) could extract them. |
 | **Policy misconfiguration** | Overly broad wildcards (`"*"`) in policy.yaml grant wide access. Review policy rules carefully. |
 | **Denial of service** | ASV has no rate limiting. A compromised agent could exhaust API quota. |
@@ -304,7 +346,7 @@ npm run lint           # type-check without emitting
 - Set restrictive permissions on your MCP config file: `chmod 600 ~/.cursor/mcp.json`
 - Rotate the master password periodically (requires re-encrypting all entries).
 - Review `~/.asv/audit.jsonl` regularly for unexpected requests.
-- Consider using a secrets manager (e.g. macOS Keychain) to supply `ASV_MASTER_PASSWORD` instead of hardcoding it in config files.
+- Use `asv keychain set` to store the master password in your OS keychain, eliminating the need for `ASV_MASTER_PASSWORD` in plaintext MCP config files.
 
 ---
 

@@ -5,7 +5,9 @@
  * ASV MCP Server — exposes one tool: request_credential
  *
  * Startup requirements (non-interactive, no TTY):
- *   ASV_MASTER_PASSWORD  — required; used to unlock the keystore
+ *   ASV_MASTER_PASSWORD  — optional; takes priority over OS keychain if set
+ *                          If absent, master password is read from OS keychain.
+ *                          Run "asv keychain set" to store it there.
  *   ASV_IDENTITY         — optional; defaults to "unknown"
  *   ASV_POLICY_PATH      — optional; defaults to config/policy.yaml relative to cwd
  *
@@ -18,6 +20,7 @@
  *   3. If allowed: calls proxy → audit-logs → returns { ok: true, result, request_id }.
  */
 
+import * as fs from "fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -28,21 +31,44 @@ import { Keystore } from "../vault/keystore.js";
 import { PolicyEngine } from "../policy/policy.js";
 import { AuditLogger } from "../audit/audit.js";
 import { proxyRequest } from "../proxy/openai.js";
+import { keychainGet } from "../keychain/keychain.js";
+import { RateLimiter } from "../policy/ratelimit.js";
 
 // ---------------------------------------------------------------------------
-// Environment validation
+// Master password resolution
 // ---------------------------------------------------------------------------
 
-function getRequiredEnv(name: string): string {
-  const val = process.env[name];
-  if (!val || val.trim().length === 0) {
-    process.stderr.write(
-      `Error: ${name} env var required for non-interactive MCP server start.\n` +
-        `Set it in your MCP host configuration (e.g. Cursor or Claude Code mcpServers env).\n`
-    );
-    process.exit(1);
+/**
+ * Resolve the master password from (in priority order):
+ *   1. ASV_MASTER_PASSWORD env var (explicit override)
+ *   2. OS keychain via keytar (set with: asv keychain set)
+ *
+ * Exits with a clear error if neither source has the password.
+ * Returns [password, source] where source is "env" or "keychain".
+ */
+async function resolveMasterPassword(): Promise<[string, string]> {
+  const envPassword = process.env["ASV_MASTER_PASSWORD"];
+  if (envPassword && envPassword.trim().length > 0) {
+    return [envPassword, "env"];
   }
-  return val;
+
+  // Try OS keychain
+  let keychainPassword: string | null = null;
+  try {
+    keychainPassword = await keychainGet();
+  } catch {
+    // keytar unavailable (e.g. libsecret missing on Linux) — fall through to error
+  }
+
+  if (keychainPassword) {
+    return [keychainPassword, "keychain"];
+  }
+
+  process.stderr.write(
+    "Error: No master password found.\n" +
+      "Set ASV_MASTER_PASSWORD env var, or run: asv keychain set\n"
+  );
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -86,8 +112,8 @@ const REQUEST_CREDENTIAL_TOOL = {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  // Fail fast if env vars are missing
-  const masterPassword = getRequiredEnv("ASV_MASTER_PASSWORD");
+  // Resolve master password: env var takes priority, then OS keychain
+  const [masterPassword, passwordSource] = await resolveMasterPassword();
   const identity = process.env["ASV_IDENTITY"] ?? "unknown";
   const policyPath = process.env["ASV_POLICY_PATH"] ?? undefined;
 
@@ -95,6 +121,21 @@ async function main(): Promise<void> {
   const keystore = new Keystore(masterPassword);
   const policy = new PolicyEngine(policyPath);
   const audit = new AuditLogger();
+  const rateLimiter = new RateLimiter();
+
+  // Watch policy file for changes and hot-reload on edit
+  fs.watch(policy.getPath(), { persistent: false }, (eventType) => {
+    if (eventType === "change") {
+      try {
+        policy.reload();
+        process.stderr.write(`[ASV] Policy reloaded from ${policy.getPath()}\n`);
+      } catch (err) {
+        process.stderr.write(
+          `[ASV] Policy reload failed: ${(err as Error).message}\n`
+        );
+      }
+    }
+  });
 
   // Verify master password early (fail fast on wrong password)
   if (!keystore.verifyPassword()) {
@@ -190,6 +231,30 @@ async function main(): Promise<void> {
     }
 
     // ---------------------------------------------------------------------------
+    // Rate limit check
+    // ---------------------------------------------------------------------------
+    const rateLimit = policy.getRateLimit(identity);
+    if (rateLimit !== null && !rateLimiter.check(identity, rateLimit)) {
+      const reason = `Rate limit exceeded for identity "${identity}"`;
+      audit.logDeny({
+        request_id: requestId,
+        identity,
+        service,
+        action,
+        justification,
+        reason,
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({ denied: true, reason, request_id: requestId }),
+          },
+        ],
+      };
+    }
+
+    // ---------------------------------------------------------------------------
     // Proxy call
     // ---------------------------------------------------------------------------
     let proxyResult;
@@ -276,7 +341,7 @@ async function main(): Promise<void> {
 
   // Log startup to stderr (not stdout, which is the MCP JSON-RPC channel)
   process.stderr.write(
-    `[ASV] MCP server started — identity="${identity}" policy="${policy.getPath()}"\n`
+    `[ASV] MCP server started — identity="${identity}" policy="${policy.getPath()}" password_source=${passwordSource}\n`
   );
 }
 

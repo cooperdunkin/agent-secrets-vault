@@ -11,6 +11,8 @@
  *   asv revoke <svc>   Delete stored secret
  *   asv doctor         Health-check: config, policy, crypto, proxy construction
  *   asv mcp            Start MCP server (delegates to mcp/server.ts)
+ *   asv logs           View audit log entries (--tail to watch, --last <n> for count)
+ *   asv rotate <svc>   Re-encrypt a service secret under a new master password
  */
 
 import * as fs from "fs";
@@ -20,7 +22,8 @@ import * as readline from "readline";
 import { execFileSync } from "child_process";
 import { Keystore, asvHome, keystorePath } from "../vault/keystore.js";
 import { PolicyEngine, defaultPolicyPath } from "../policy/policy.js";
-import { AuditLogger, auditLogPath } from "../audit/audit.js";
+import { AuditLogger, auditLogPath, AuditEntry } from "../audit/audit.js";
+import { keychainSet, keychainDelete, keychainExists } from "../keychain/keychain.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -378,6 +381,187 @@ function cmdMcp(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Logs helpers + command
+// ---------------------------------------------------------------------------
+
+/** Format a single audit log entry as a human-readable line. */
+function formatLogEntry(entry: AuditEntry): string {
+  // Convert ISO-8601 to "YYYY-MM-DD HH:MM:SS"
+  const ts = entry.timestamp.replace("T", " ").replace(/\.\d+Z$/, "");
+  const decision = entry.decision.toUpperCase().padEnd(5);
+  const latency = `${entry.latency_ms ?? 0}ms`;
+  const reqId = entry.request_id.slice(0, 8);
+  const errorSuffix = entry.error ? `  (${entry.error})` : "";
+  return `[${ts}] ${decision}  ${entry.identity} → ${entry.service}/${entry.action}  ${latency}  req:${reqId}${errorSuffix}`;
+}
+
+/** asv logs [--tail] [--last <n>] */
+async function cmdLogs(args: string[]): Promise<void> {
+  const logPath = auditLogPath();
+  const tail = args.includes("--tail");
+
+  let lastN = 50;
+  const lastIdx = args.indexOf("--last");
+  if (lastIdx !== -1) {
+    const n = parseInt(args[lastIdx + 1] ?? "", 10);
+    if (isNaN(n) || n < 1) die("--last requires a positive integer");
+    lastN = n;
+  }
+
+  if (!fs.existsSync(logPath)) {
+    print(`No audit log found at ${logPath}. Run asv mcp to start logging.`);
+    return;
+  }
+
+  const content = fs.readFileSync(logPath, "utf8");
+  const lines = content.split("\n").filter((l) => l.trim().length > 0);
+  const slice = lines.slice(-lastN);
+
+  for (const line of slice) {
+    try {
+      const entry = JSON.parse(line) as AuditEntry;
+      print(formatLogEntry(entry));
+    } catch {
+      // Skip malformed lines
+    }
+  }
+
+  if (tail) {
+    print("");
+    print("Watching for new entries (Ctrl-C to stop)...");
+    let offset = fs.statSync(logPath).size;
+
+    fs.watch(logPath, () => {
+      try {
+        const stat = fs.statSync(logPath);
+        if (stat.size <= offset) return;
+        const fd = fs.openSync(logPath, "r");
+        const buffer = Buffer.alloc(stat.size - offset);
+        fs.readSync(fd, buffer, 0, buffer.length, offset);
+        fs.closeSync(fd);
+        offset = stat.size;
+        const newLines = buffer.toString("utf8").split("\n").filter((l) => l.trim().length > 0);
+        for (const newLine of newLines) {
+          try {
+            const entry = JSON.parse(newLine) as AuditEntry;
+            print(formatLogEntry(entry));
+          } catch {
+            // Skip malformed lines
+          }
+        }
+      } catch {
+        // Ignore transient watch errors
+      }
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Keychain command
+// ---------------------------------------------------------------------------
+
+/** asv keychain <set|delete|status> */
+async function cmdKeychain(subcommand: string): Promise<void> {
+  switch (subcommand) {
+    case "set": {
+      const pw = await promptMasterPassword("Master password to store in keychain");
+      const confirm = await promptMasterPassword("Confirm");
+      if (pw !== confirm) {
+        die("Passwords do not match.");
+      }
+      try {
+        await keychainSet(pw);
+      } catch (err) {
+        die((err as Error).message);
+      }
+      print("  ✓ Master password stored in OS keychain.");
+      print("    You can now remove ASV_MASTER_PASSWORD from your MCP config.");
+      break;
+    }
+    case "delete": {
+      let deleted = false;
+      try {
+        deleted = await keychainDelete();
+      } catch (err) {
+        die((err as Error).message);
+      }
+      if (deleted) {
+        print("  ✓ Master password removed from OS keychain.");
+      } else {
+        print("  · No master password found in keychain.");
+      }
+      break;
+    }
+    case "status": {
+      let exists = false;
+      try {
+        exists = await keychainExists();
+      } catch (err) {
+        die((err as Error).message);
+      }
+      if (exists) {
+        print("Keychain: master password is stored");
+      } else {
+        print("Keychain: no master password stored");
+      }
+      break;
+    }
+    default:
+      die(
+        `Unknown keychain subcommand: "${subcommand}"\n` +
+          "Usage: asv keychain <set|delete|status>"
+      );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rotate command
+// ---------------------------------------------------------------------------
+
+/** asv rotate <service> */
+async function cmdRotate(service: string): Promise<void> {
+  if (!service) die("Usage: asv rotate <service>  (e.g. asv rotate openai)");
+
+  // 1. Prompt for current master password
+  const currentPw = await promptMasterPassword("Current master password");
+
+  // 2. Verify current password
+  const ks = new Keystore(currentPw);
+  if (!ks.verifyPassword()) {
+    die("Wrong master password.");
+  }
+
+  // 3. Retrieve the secret under the current password
+  let secret: string;
+  try {
+    secret = ks.getSecret(service);
+  } catch (err) {
+    die((err as Error).message);
+  }
+
+  // 4. Prompt for new master password
+  const newPw = await promptMasterPassword("New master password");
+
+  // 5. Confirm new master password
+  const confirmPw = await promptMasterPassword("Confirm new master password");
+  if (newPw !== confirmPw) {
+    secret = "";
+    die("Passwords do not match.");
+  }
+
+  // 6. Re-encrypt under new password
+  const newKs = new Keystore(newPw);
+  newKs.setSecret(service, secret);
+
+  // 7. Overwrite secret immediately
+  secret = "";
+
+  print(`  ✓ Secret for "${service}" re-encrypted with new master password.`);
+  print(`    Note: other services remain encrypted with the old password.`);
+  print(`    Run asv rotate <service> for each additional service.`);
+}
+
+// ---------------------------------------------------------------------------
 // Help
 // ---------------------------------------------------------------------------
 
@@ -395,6 +579,14 @@ Commands:
   revoke <service>  Delete the stored secret for a service
   doctor            Run health checks on config, crypto, and keystore
   mcp               Start the MCP server (requires ASV_MASTER_PASSWORD env var)
+  logs              Show audit log entries (newest last, default 50)
+                      --last <n>   Show last N entries
+                      --tail       Watch for new entries in real time (Ctrl-C to stop)
+  rotate <service>  Re-encrypt a service secret under a new master password
+                      Note: run once per service — each is rotated individually
+  keychain set      Store master password in OS keychain (eliminates plaintext in config)
+  keychain delete   Remove master password from OS keychain
+  keychain status   Check whether master password is in keychain
   help              Show this help message
 
 Environment variables (for MCP server):
@@ -434,6 +626,15 @@ async function main(): Promise<void> {
       break;
     case "mcp":
       cmdMcp();
+      break;
+    case "logs":
+      await cmdLogs(rest);
+      break;
+    case "rotate":
+      await cmdRotate(rest[0] ?? "");
+      break;
+    case "keychain":
+      await cmdKeychain(rest[0] ?? "");
       break;
     case "help":
     case "--help":

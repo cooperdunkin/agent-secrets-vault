@@ -32,3 +32,27 @@ policies:
   #     - service: openai
   #       actions:
   #         - responses.create
+
+  # Example: Anthropic connector
+  # - identity: local-dev
+  #   allow:
+  #     - service: anthropic
+  #       actions:
+  #         - messages.create
+
+  # Example: GitHub connector
+  # - identity: local-dev
+  #   allow:
+  #     - service: github
+  #       actions:
+  #         - repos.get
+  #         - issues.create
+
+  # Example: rate limiting (60 requests per minute)
+  # - identity: local-dev
+  #   rateLimit:
+  #     requestsPerMinute: 60
+  #   allow:
+  #     - service: openai
+  #       actions:
+  #         - responses.create

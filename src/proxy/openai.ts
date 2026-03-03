@@ -16,6 +16,8 @@
  */
 
 import { Keystore } from "../vault/keystore.js";
+import { proxyAnthropicMessages } from "./anthropic.js";
+import { proxyGitHubAction } from "./github.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -174,6 +176,20 @@ export async function proxyRequest(
 ): Promise<ProxyResponse> {
   if (service === "openai" && action === "responses.create") {
     return proxyOpenAIResponses(params, keystore);
+  }
+
+  if (service === "anthropic" && action === "messages.create") {
+    return proxyAnthropicMessages(params, keystore);
+  }
+
+  if (
+    service === "github" &&
+    (action === "repos.get" ||
+      action === "issues.create" ||
+      action === "pulls.create" ||
+      action === "contents.read")
+  ) {
+    return proxyGitHubAction(action, params, keystore);
   }
 
   return {

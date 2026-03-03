@@ -31,8 +31,13 @@ interface PolicyAllow {
   actions: string[];
 }
 
+interface RateLimit {
+  requestsPerMinute: number;
+}
+
 interface PolicyEntry {
   identity: string;
+  rateLimit?: RateLimit;
   allow: PolicyAllow[];
 }
 
@@ -93,6 +98,18 @@ export class PolicyEngine {
     for (const entry of file.policies) {
       if (typeof entry.identity !== "string") {
         throw new Error(`Policy entry missing "identity" field.`);
+      }
+      // Validate optional rateLimit field
+      if (entry.rateLimit !== undefined && entry.rateLimit !== null) {
+        const rl = entry.rateLimit as { requestsPerMinute?: unknown };
+        if (
+          typeof rl.requestsPerMinute !== "number" ||
+          rl.requestsPerMinute <= 0
+        ) {
+          throw new Error(
+            `Policy entry "${entry.identity}" has invalid rateLimit.requestsPerMinute — must be a positive number.`
+          );
+        }
       }
       if (!Array.isArray(entry.allow)) {
         throw new Error(
@@ -157,5 +174,24 @@ export class PolicyEngine {
   /** Return a copy of loaded policies (for introspection/doctor). */
   getPolicies(): ReadonlyArray<PolicyEntry> {
     return this.policies;
+  }
+
+  /**
+   * Return the rate limit (requests per minute) configured for an identity.
+   * Checks exact identity match first, then wildcard "*".
+   * Returns null if no rate limit is configured.
+   */
+  getRateLimit(identity: string): number | null {
+    for (const entry of this.policies) {
+      if (entry.identity === identity) {
+        return entry.rateLimit?.requestsPerMinute ?? null;
+      }
+    }
+    for (const entry of this.policies) {
+      if (entry.identity === "*") {
+        return entry.rateLimit?.requestsPerMinute ?? null;
+      }
+    }
+    return null;
   }
 }
