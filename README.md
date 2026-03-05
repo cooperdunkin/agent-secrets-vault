@@ -31,13 +31,10 @@ The agent describes what it needs. ASV checks the policy, calls the external API
 - Node.js 20+
 - npm
 
-### 1. Install and build
+### 1. Install globally
 
 ```bash
-cd /path/to/agent-secrets-vault
-npm install
-npm run build
-npm link        # makes "asv" available globally
+npm install -g agent-secrets-vault
 ```
 
 ### 2. Initialise ASV
@@ -337,7 +334,7 @@ npm run lint           # type-check without emitting
 | **`ASV_MASTER_PASSWORD` in MCP config** | Mitigated by `asv keychain set`, which stores the master password in your OS keychain (macOS Keychain, Linux Secret Service, Windows Credential Manager) so it never appears in config files. See [Keychain Setup](#keychain-setup-recommended). If you use the env var approach instead, restrict config file permissions with `chmod 600`. |
 | **Memory scraping** | Decrypted secrets pass through process memory. An attacker with memory-read access (e.g. via ptrace) could extract them. |
 | **Policy misconfiguration** | Overly broad wildcards (`"*"`) in policy.yaml grant wide access. Review policy rules carefully. |
-| **Denial of service** | ASV has no rate limiting. A compromised agent could exhaust API quota. |
+| **Denial of service** | ASV supports per-identity rate limiting (configurable via `rateLimit.requestsPerMinute` in policy.yaml), but it is off by default and only limits request volume — not API quota consumption per request. A compromised agent could still exhaust API quota with large or expensive requests. |
 | **Supply chain attacks** | ASV depends on `@modelcontextprotocol/sdk`, `js-yaml`, and `uuid`. Review their integrity in production deployments. |
 
 ### Recommended additional hardening

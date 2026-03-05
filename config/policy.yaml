@@ -17,6 +17,15 @@ policies:
       - service: openai
         actions:
           - responses.create
+      - service: anthropic
+        actions:
+          - messages.create
+      - service: github
+        actions:
+          - repos.get
+          - issues.create
+          - pulls.create
+          - contents.read
 
   # Example: CI pipeline with broader access
   # - identity: ci-runner

@@ -18,12 +18,13 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import * as crypto from "crypto";
 import * as readline from "readline";
 import { execFileSync } from "child_process";
 import { Keystore, asvHome, keystorePath } from "../vault/keystore.js";
 import { PolicyEngine, defaultPolicyPath } from "../policy/policy.js";
 import { AuditLogger, auditLogPath, AuditEntry } from "../audit/audit.js";
-import { keychainSet, keychainDelete, keychainExists } from "../keychain/keychain.js";
+import { keychainSet, keychainDelete, keychainExists, keychainGet } from "../keychain/keychain.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -205,6 +206,11 @@ async function cmdAdd(service: string): Promise<void> {
 
 /** asv list */
 async function cmdList(): Promise<void> {
+  if (!fs.existsSync(keystorePath())) {
+    print("No secrets stored. Run: asv add <service>");
+    return;
+  }
+
   const masterPw = await promptMasterPassword();
   const ks = new Keystore(masterPw);
 
@@ -301,7 +307,20 @@ async function cmdDoctor(): Promise<void> {
   check("Audit log directory exists", fs.existsSync(auditDir), auditDir);
 
   // 5. Crypto self-test
-  const masterPw = await promptMasterPassword("Master password (for crypto test)");
+  let masterPw: string;
+  if (!kExists) {
+    // No keystore yet — use a random key just to prove AES-256-GCM works
+    masterPw = crypto.randomBytes(16).toString("hex");
+  } else {
+    // Try keychain first, fall back to interactive prompt
+    let keychainPw: string | null = null;
+    try {
+      keychainPw = await keychainGet();
+    } catch {
+      // keychain unavailable — fall through to prompt
+    }
+    masterPw = keychainPw ?? await promptMasterPassword("Master password (for crypto test)");
+  }
   try {
     Keystore.selfTest(masterPw);
     check("AES-256-GCM crypto self-test", true);
@@ -567,7 +586,7 @@ async function cmdRotate(service: string): Promise<void> {
 
 function printHelp(): void {
   print(`
-ASV — Agent Secrets Vault v0.1.0
+ASV — Agent Secrets Vault v0.1.1
 
 Usage:
   asv <command> [args]
