@@ -621,11 +621,43 @@ Examples:
 }
 
 // ---------------------------------------------------------------------------
+// First-run welcome
+// ---------------------------------------------------------------------------
+
+function firstRunMarkerPath(): string {
+  return path.join(os.homedir(), ".asv", ".welcomed");
+}
+
+function showFirstRunMessageIfNeeded(command: string): void {
+  // Skip for mcp (non-interactive stdio process)
+  if (command === "mcp") return;
+
+  const marker = firstRunMarkerPath();
+  if (fs.existsSync(marker)) return;
+
+  // Show once, then mark as seen
+  print("");
+  print("👋 New to ASV? Tell us how you're using it — it takes 30 seconds and");
+  print("   helps shape what gets built next:");
+  print("   https://github.com/cooperdunkin/agent-secrets-vault/issues/new?template=user-feedback.md&title=How+I%27m+using+ASV");
+  print("");
+
+  try {
+    fs.mkdirSync(path.join(os.homedir(), ".asv"), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(marker, new Date().toISOString() + "\n", { mode: 0o600 });
+  } catch {
+    // Non-fatal — if we can't write the marker, we just show it again next time
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   const [, , command, ...rest] = process.argv;
+
+  showFirstRunMessageIfNeeded(command ?? "");
 
   switch (command) {
     case "init":

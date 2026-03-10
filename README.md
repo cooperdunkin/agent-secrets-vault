@@ -25,6 +25,8 @@ OpenAI API  ──── raw response ────► back to agent
 
 The agent describes what it needs. ASV checks the policy, calls the external API with the stored credential, and returns only the API response.
 
+If ASV is useful to you, [starring the repo](https://github.com/cooperdunkin/agent-secrets-vault) helps others find it.
+
 ---
 
 ## Supported Services
