@@ -1,6 +1,6 @@
 {
   "name": "agent-secrets-vault",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Local MCP-compatible credential broker — AI agents call external services without ever receiving raw credentials",
   "main": "dist/cli/index.js",
   "bin": {
