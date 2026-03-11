@@ -16,7 +16,7 @@
     "type": "git",
     "url": "https://github.com/cooperdunkin/agent-secrets-vault.git"
   },
-  "homepage": "https://github.com/cooperdunkin/agent-secrets-vault",
+  "homepage": "https://cooperdunkin.github.io/asv-landing/",
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
