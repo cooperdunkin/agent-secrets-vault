@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/axis-asv.svg)](https://www.npmjs.com/package/axis-asv)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Website](https://img.shields.io/badge/website-axis--landing-brightgreen)](https://cooperdunkin.github.io/axis-landing/)
+[![Website](https://img.shields.io/badge/website-axisproxy.com-brightgreen)](https://axisproxy.com/)
 
 Axis is an **agent secrets vault (ASV)** — a local, MCP-native broker that lets AI agents call external services without ever receiving raw credentials.
 
