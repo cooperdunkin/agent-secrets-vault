@@ -16,7 +16,7 @@
     "type": "git",
     "url": "https://github.com/cooperdunkin/axis-asv.git"
   },
-  "homepage": "https://cooperdunkin.github.io/axis-landing/",
+  "homepage": "https://axisproxy.com/",
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",

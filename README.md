@@ -58,7 +58,7 @@ If Axis is useful to you, [starring the repo](https://github.com/cooperdunkin/ax
 ### 1. Install globally
 
 ```bash
-npm install -g axis-asv
+npm install -g axis
 ```
 
 ### 2. Initialise Axis
